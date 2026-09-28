@@ -1,0 +1,505 @@
+openapi: 3.0.3
+
+info:
+  title: REST API Pesantren Multi-Client
+  description: >
+    API untuk Sistem Manajemen Pesantren Multi-Client.
+    Menyediakan endpoint untuk absensi santri berbasis QR Code,
+    dengan isolasi data antar client (pesantren).
+  version: 1.0.0
+  contact:
+    name: Tim Pengembang
+    email: admin@pesantren.test
+
+servers:
+  - url: http://localhost:8000
+    description: Local Development Server
+
+tags:
+  - name: Attendance
+    description: Operasi absensi santri (scan QR & rekap)
+  - name: Student
+    description: Operasi data santri & QR Code
+
+paths:
+
+  /api/attendance/scan:
+    post:
+      tags:
+        - Attendance
+      summary: Mencatat absensi santri dari scan QR Code
+      description: >
+        Menerima QR token dari aplikasi scanner, memvalidasi device
+        dan santri, memeriksa isolasi client, lalu menyimpan data
+        absensi ke database.
+      operationId: scanAttendance
+
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttendanceScanInput'
+            example:
+              qr_token: "SANTRI-2026-A001-XYZ123"
+              device_id: "DEV-ALHIKMAH-01"
+              location_type: "dormitory"
+              location_id: 3
+
+      responses:
+        '200':
+          description: Absensi berhasil dicatat
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttendanceResponse'
+
+        '401':
+          description: Device tidak terdaftar atau tidak aktif
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: "Device tidak terdaftar atau tidak aktif"
+
+        '404':
+          description: QR Code tidak dikenali (termasuk isolasi client)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: "QR Code tidak dikenali"
+
+        '409':
+          description: Scan duplikat (kurang dari 5 menit)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DuplicateResponse'
+              example:
+                success: false
+                message: "Sudah absen 5 menit yang lalu"
+                data:
+                  last_scan_at: "2026-09-23T05:30:00.000000Z"
+
+        '422':
+          description: Data yang dikirim tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+
+        '500':
+          description: Terjadi kesalahan pada server
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+
+  /api/attendance/today:
+    get:
+      tags:
+        - Attendance
+      summary: Mengambil rekap absensi hari ini
+      description: >
+        Mengembalikan daftar absensi yang tercatat hari ini,
+        termasuk informasi santri dan status kehadiran.
+      operationId: getTodayAttendance
+
+      responses:
+        '200':
+          description: Rekap absensi hari ini berhasil diambil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttendanceListResponse'
+
+        '500':
+          description: Terjadi kesalahan pada server
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+
+  /api/students/{id}/attendance:
+    get:
+      tags:
+        - Student
+      summary: Mengambil riwayat absensi santri
+      description: >
+        Mengembalikan riwayat absensi untuk satu santri tertentu,
+        dengan pagination 30 record per halaman.
+      operationId: getStudentAttendanceHistory
+
+      parameters:
+        - name: id
+          in: path
+          description: ID santri
+          required: true
+          schema:
+            type: integer
+            example: 1
+
+      responses:
+        '200':
+          description: Riwayat absensi berhasil diambil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttendanceHistoryResponse'
+
+        '404':
+          description: Santri tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+        '500':
+          description: Terjadi kesalahan pada server
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+
+  /api/students/qr-list:
+    get:
+      tags:
+        - Student
+      summary: Mengambil daftar QR Code seluruh santri
+      description: >
+        Mengembalikan daftar santri beserta QR token dan URL gambar
+        QR Code, digunakan untuk cetak kartu santri massal.
+      operationId: getStudentQrList
+
+      responses:
+        '200':
+          description: Daftar QR Code santri berhasil diambil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StudentQrListResponse'
+
+        '500':
+          description: Terjadi kesalahan pada server
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+
+components:
+
+  schemas:
+
+    # ============ RESOURCE: ATTENDANCE ============
+
+    Attendance:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+
+        client_id:
+          type: integer
+          example: 1
+
+        student_id:
+          type: integer
+          example: 1
+
+        type:
+          type: string
+          enum: [academic, dormitory, gate]
+          example: "dormitory"
+
+        status:
+          type: string
+          enum: [present, late, absent, permission, sick]
+          example: "present"
+
+        device_id:
+          type: string
+          example: "DEV-ALHIKMAH-01"
+
+        location_type:
+          type: string
+          example: "dormitory"
+
+        location_id:
+          type: integer
+          nullable: true
+          example: 3
+
+        scanned_at:
+          type: string
+          format: date-time
+          example: "2026-09-23T05:09:16.000000Z"
+
+
+    AttendanceScanInput:
+      type: object
+      required:
+        - qr_token
+        - device_id
+        - location_type
+
+      properties:
+        qr_token:
+          type: string
+          description: Token unik santri yang dibaca dari QR Code
+          example: "SANTRI-2026-A001-XYZ123"
+
+        device_id:
+          type: string
+          description: ID device scanner yang terdaftar
+          example: "DEV-ALHIKMAH-01"
+
+        location_type:
+          type: string
+          enum: [academic, dormitory, gate]
+          description: Tipe lokasi scan
+          example: "dormitory"
+
+        location_id:
+          type: integer
+          nullable: true
+          description: ID lokasi spesifik (kamar/kelas/gerbang)
+          example: 3
+
+
+    AttendanceResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+
+        data:
+          type: object
+          properties:
+            student_name:
+              type: string
+              example: "Ahmad Fauzan"
+
+            student_number:
+              type: string
+              example: "2026.0401"
+
+            status:
+              type: string
+              enum: [present, late, absent, permission, sick]
+              example: "present"
+
+            attendance_id:
+              type: integer
+              example: 1
+
+            recorded_at:
+              type: string
+              format: date-time
+              example: "2026-09-23T05:09:16.000000Z"
+
+        message:
+          type: string
+          example: "Absensi berhasil dicatat"
+
+
+    AttendanceListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+                example: 1
+
+              student_id:
+                type: integer
+                example: 1
+
+              status:
+                type: string
+                example: "present"
+
+              scanned_at:
+                type: string
+                format: date-time
+
+              student:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    example: "Ahmad Fauzan"
+
+                  student_number:
+                    type: string
+                    example: "2026.0401"
+
+
+    AttendanceHistoryResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+
+        data:
+          type: object
+          properties:
+            current_page:
+              type: integer
+              example: 1
+
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/Attendance'
+
+            total:
+              type: integer
+              example: 15
+
+            per_page:
+              type: integer
+              example: 30
+
+
+    DuplicateResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+
+        message:
+          type: string
+          example: "Sudah absen 5 menit yang lalu"
+
+        data:
+          type: object
+          properties:
+            last_scan_at:
+              type: string
+              format: date-time
+              example: "2026-09-23T05:30:00.000000Z"
+
+
+    # ============ RESOURCE: STUDENT ============
+
+    Student:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+
+        client_id:
+          type: integer
+          example: 1
+
+        name:
+          type: string
+          example: "Ahmad Fauzan"
+
+        student_number:
+          type: string
+          example: "2026.0401"
+
+        qr_token:
+          type: string
+          example: "SANTRI-2026-A001-XYZ123"
+
+        qr_image_path:
+          type: string
+          nullable: true
+          example: "qr-codes/2026.0401-abc123.png"
+
+        status:
+          type: string
+          enum: [pending, active, suspended]
+          example: "active"
+
+
+    StudentQrListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+                example: 1
+
+              name:
+                type: string
+                example: "Ahmad Fauzan"
+
+              student_number:
+                type: string
+                example: "2026.0401"
+
+              qr_token:
+                type: string
+                example: "SANTRI-2026-A001-XYZ123"
+
+              qr_url:
+                type: string
+                format: uri
+                example: "http://localhost:8000/qr-image/qr-codes/2026.0401-abc123.png"
+
+
+    # ============ ERROR RESPONSES ============
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+
+        message:
+          type: string
+          example: "QR Code tidak dikenali"
+
+
+    ValidationErrorResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "The given data was invalid."
+
+        errors:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          example:
+            qr_token:
+              - "The qr token field is required."
+            device_id:
+              - "The device id field is required."
